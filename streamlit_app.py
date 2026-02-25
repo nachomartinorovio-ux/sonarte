@@ -1,57 +1,81 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import pandas as pd
 from datetime import datetime
 
-# Configuración básica
-st.set_page_config(page_title="Sonarte IA", page_icon="🤖")
-st.title("🤖 Sonarte IA")
+# 1. CONFIGURACIÓN DE SONARTE IA
+st.set_page_config(page_title="Sonarte IA: Gestor PRO", page_icon="🤖")
 
-# 1. Configuración del Motor (Instrucciones de AI Studio)
+# INSTRUCCIONES DE SISTEMA (Pega aquí las que usas en AI Studio)
+INSTRUCCIONES = """
+Eres Sonarte IA, el asistente experto de Sonarte. 
+Tu misión es ayudar al gestor con dudas operativas.
+Si el mensaje es un reporte (ej: 'Sierpes 1 limpieza'), confírmalo brevemente. 
+Eres eficiente, resolutivo y profesional.
+"""
+
+# Configuración de seguridad para evitar el ERROR 400 (Bloquea nada)
+seguridad = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+}
+
+st.title("🤖 Sonarte IA: Gestor PRO")
+
+# 2. ARRANQUE DEL MOTOR
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    
+    # Buscador automático para evitar el 404
+    modelos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    motor = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in modelos else modelos[0]
+    
     model = genai.GenerativeModel(
-        model_name='gemini-1.5-flash',
-        system_instruction="Eres Sonarte IA. Ayudas al gestor y registras reportes de limpieza o averías de forma breve."
+        model_name=motor,
+        system_instruction=INSTRUCCIONES
     )
+    
     conn = st.connection("gsheets", type=GSheetsConnection)
-    st.sidebar.success("🚀 Motor: Gemini 1.5 Flash")
+    st.sidebar.success(f"🚀 Motor Activo: {motor}")
 except Exception as e:
-    st.error(f"Error de conexión: {e}")
+    st.error(f"Fallo crítico de arranque: {e}")
     st.stop()
 
-# 2. Historial de Chat
+# 3. INTERFAZ DE CHAT
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
-        st.write(m["content"])
+        st.markdown(m["content"])
 
-# 3. Entrada de Usuario
 if prompt := st.chat_input("¿Qué ha pasado hoy?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
-        st.write(prompt)
+        st.markdown(prompt)
 
     with st.chat_message("assistant"):
         try:
-            # Respuesta de la IA
-            response = model.generate_content(prompt)
+            # IA Responde al gestor
+            response = model.generate_content(prompt, safety_settings=seguridad)
             texto_ia = response.text
             
-            # Guardado para MAKE (Pestaña ENTRADA_GLIDE)
+            # GUARDADO PARA MAKE (ENTRADA_GLIDE)
             df_actual = conn.read(worksheet="ENTRADA_GLIDE")
             nueva_fila = pd.DataFrame([{
                 "FECHA": datetime.now().strftime("%d/%m/%Y %H:%M"),
-                "MENSAJE_BRUTO": prompt # Enviamos el mensaje tal cual para que Make lo procese
+                "MENSAJE_BRUTO": prompt # Make recibirá el mensaje original
             }])
             df_final = pd.concat([df_actual, nueva_fila], ignore_index=True)
             conn.update(worksheet="ENTRADA_GLIDE", data=df_final)
 
-            st.write(texto_ia)
+            st.markdown(texto_ia)
             st.session_state.messages.append({"role": "assistant", "content": texto_ia})
             st.balloons()
+            st.caption("📊 Reporte enviado a Make.")
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error en el proceso: {e}")
