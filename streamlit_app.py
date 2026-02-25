@@ -5,33 +5,42 @@ import pandas as pd
 from datetime import datetime
 
 # CONFIGURACIÓN DE SONARTE IA
-st.set_page_config(page_title="Sonarte IA", page_icon="🤖", layout="centered")
+st.set_page_config(page_title="Sonarte IA: Gestor PRO", page_icon="🤖", layout="centered")
 
 # --- INSTRUCCIONES DE COMPORTAMIENTO (COMO EN AI STUDIO) ---
 SISTEMA_PROMPT = """
-Eres Sonarte IA, el asistente experto y mano derecha de los gestores de Sonarte. 
-Tu misión es doble:
-1. Ayudar al gestor con cualquier duda sobre la operativa de los apartamentos.
-2. Procesar reportes (limpiezas, averías, entradas). 
-Si el gestor te da un reporte (ej: 'Sierpes 1 limpia'), tu respuesta debe ser corta y confirmar que lo has registrado.
-Actúa siempre de forma profesional, eficiente y resolutiva.
+Eres Sonarte IA, el asistente experto de Sonarte. 
+Tu misión:
+1. Ayudar al gestor con dudas sobre la operativa.
+2. Si el gestor reporta algo (limpieza, avería, entrada), confírmalo de forma breve.
+Eres eficiente, directo y siempre estás listo para actuar.
 """
 
 st.title("🤖 Sonarte IA: Gestor PRO")
 
-# --- CONEXIÓN BLINDADA ---
+# --- MOTOR DE INTELIGENCIA CON BUSCADOR AUTOMÁTICO ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
-    # Configuramos el modelo con las instrucciones de AI Studio
+    # Buscamos qué modelos tienes activos para evitar el Error 404
+    modelos_vivos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    
+    if 'models/gemini-1.5-flash' in modelos_vivos:
+        motor_final = 'models/gemini-1.5-flash'
+    else:
+        motor_final = modelos_vivos[0]
+        
     model = genai.GenerativeModel(
-        model_name='gemini-1.5-flash',
+        model_name=motor_final,
         system_instruction=SISTEMA_PROMPT
     )
     
+    # EL CHIVATO LATERAL (Para saber que todo está OK)
+    st.sidebar.success(f"🚀 Motor activo: {motor_final}")
     conn = st.connection("gsheets", type=GSheetsConnection)
+
 except Exception as e:
-    st.error(f"Error de configuración: {e}")
+    st.error(f"Fallo de arranque: {e}")
     st.stop()
 
 # --- CHAT ---
@@ -43,7 +52,7 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 if prompt := st.chat_input("Dime qué ha pasado o pregunta tus dudas..."):
-    # Evitamos el error 400 limpiando el texto
+    # Limpieza de texto para evitar el Error 400
     user_input = prompt.strip()
     if not user_input:
         st.stop()
@@ -54,16 +63,14 @@ if prompt := st.chat_input("Dime qué ha pasado o pregunta tus dudas..."):
 
     with st.chat_message("assistant"):
         try:
-            # 1. La IA genera la respuesta (ayuda o confirmación)
+            # 1. La IA responde como en AI Studio
             response = model.generate_content(user_input)
             respuesta_texto = response.text
             
-            # 2. LÓGICA DE GUARDADO PARA MAKE (Solo si parece un reporte)
-            # Si el mensaje es corto o menciona limpieza/avería, lo mandamos al Excel
-            instrucciones_resumen = f"Resume para Excel en 3 palabras: {user_input}"
-            resumen_ia = model.generate_content(instrucciones_resumen).text.strip()
+            # 2. GUARDADO PARA MAKE (ENTRADA_GLIDE)
+            # Resumimos para que Make lo entienda a la primera
+            resumen_ia = model.generate_content(f"Resume en 3 palabras: {user_input}").text.strip()
             
-            # Escribir en ENTRADA_GLIDE
             df_actual = conn.read(worksheet="ENTRADA_GLIDE")
             nueva_fila = pd.DataFrame([{
                 "FECHA": datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -72,10 +79,11 @@ if prompt := st.chat_input("Dime qué ha pasado o pregunta tus dudas..."):
             df_final = pd.concat([df_actual, nueva_fila], ignore_index=True)
             conn.update(worksheet="ENTRADA_GLIDE", data=df_final)
 
-            # 3. Mostrar respuesta al gestor
+            # 3. Mostrar resultado
             st.markdown(respuesta_texto)
             st.session_state.messages.append({"role": "assistant", "content": respuesta_texto})
             st.caption(f"📊 Registrado para Make: {resumen_ia}")
+            st.balloons()
             
         except Exception as e:
-            st.error(f"Fallo en el proceso: {e}")
+            st.error(f"Error en el proceso: {e}")
