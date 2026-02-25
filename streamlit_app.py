@@ -1,49 +1,48 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import google.generativeai as genai
+from google.generativeai.types import SafetySettingDict, HarmCategory, HarmBlockThreshold
 import pandas as pd
 from datetime import datetime
 
-# CONFIGURACIÓN DE SONARTE IA
-st.set_page_config(page_title="Sonarte IA: Gestor PRO", page_icon="🤖", layout="centered")
+# Configuración de Sonarte IA
+st.set_page_config(page_title="Sonarte IA", page_icon="🤖")
+st.title("🤖 Sonarte IA: Gestión Imparable")
 
-# --- INSTRUCCIONES DE COMPORTAMIENTO (COMO EN AI STUDIO) ---
-SISTEMA_PROMPT = """
-Eres Sonarte IA, el asistente experto de Sonarte. 
-Tu misión:
-1. Ayudar al gestor con dudas sobre la operativa.
-2. Si el gestor reporta algo (limpieza, avería, entrada), confírmalo de forma breve.
-Eres eficiente, directo y siempre estás listo para actuar.
-"""
+# --- 1. CONFIGURACIÓN DEL MODELO (COMO EN AI STUDIO) ---
+SISTEMA_PROMPT = """Eres Sonarte IA. Ayudas al gestor con dudas y registras reportes. 
+Si el mensaje es un reporte de piso (limpieza, entrada, avería), confírmalo brevemente. 
+Tu tono es profesional y resolutivo."""
 
-st.title("🤖 Sonarte IA: Gestor PRO")
+# Filtros de seguridad en 'BLOCK_NONE' para evitar el Error 400 por bloqueos falsos
+safety_settings = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+]
 
-# --- MOTOR DE INTELIGENCIA CON BUSCADOR AUTOMÁTICO ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
-    # Buscamos qué modelos tienes activos para evitar el Error 404
-    modelos_vivos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    # Buscador de motor que tanto te gustó
+    modelos_disponibles = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    motor = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in modelos_disponibles else modelos_disponibles[0]
     
-    if 'models/gemini-1.5-flash' in modelos_vivos:
-        motor_final = 'models/gemini-1.5-flash'
-    else:
-        motor_final = modelos_vivos[0]
-        
+    # Inicializamos el modelo con todo el poder
     model = genai.GenerativeModel(
-        model_name=motor_final,
-        system_instruction=SISTEMA_PROMPT
+        model_name=motor,
+        system_instruction=SISTEMA_PROMPT,
+        safety_settings=safety_settings
     )
     
-    # EL CHIVATO LATERAL (Para saber que todo está OK)
-    st.sidebar.success(f"🚀 Motor activo: {motor_final}")
     conn = st.connection("gsheets", type=GSheetsConnection)
-
+    st.sidebar.success(f"🚀 Motor Activo: {motor}")
 except Exception as e:
-    st.error(f"Fallo de arranque: {e}")
+    st.error(f"Fallo de motor: {e}")
     st.stop()
 
-# --- CHAT ---
+# --- 2. EL CHAT ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -51,39 +50,38 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-if prompt := st.chat_input("Dime qué ha pasado o pregunta tus dudas..."):
-    # Limpieza de texto para evitar el Error 400
-    user_input = prompt.strip()
-    if not user_input:
-        st.stop()
-
-    st.session_state.messages.append({"role": "user", "content": user_input})
+if prompt := st.chat_input("¿Qué ha pasado hoy en los pisos?"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(prompt)
 
     with st.chat_message("assistant"):
         try:
-            # 1. La IA responde como en AI Studio
-            response = model.generate_content(user_input)
-            respuesta_texto = response.text
+            # A. Respuesta de la IA para el Gestor
+            response = model.generate_content(prompt)
+            texto_ia = response.text
             
-            # 2. GUARDADO PARA MAKE (ENTRADA_GLIDE)
-            # Resumimos para que Make lo entienda a la primera
-            resumen_ia = model.generate_content(f"Resume en 3 palabras: {user_input}").text.strip()
+            # B. Registro para MAKE (ENTRADA_GLIDE)
+            # Solo enviamos un resumen corto al Excel
+            resumen_query = f"Resume este mensaje en 3 palabras para una base de datos: {prompt}"
+            resumen_para_excel = model.generate_content(resumen_query).text.strip()
             
+            # Sincronización con GSheets
             df_actual = conn.read(worksheet="ENTRADA_GLIDE")
             nueva_fila = pd.DataFrame([{
                 "FECHA": datetime.now().strftime("%d/%m/%Y %H:%M"),
-                "MENSAJE_BRUTO": resumen_ia
+                "MENSAJE_BRUTO": resumen_para_excel
             }])
             df_final = pd.concat([df_actual, nueva_fila], ignore_index=True)
             conn.update(worksheet="ENTRADA_GLIDE", data=df_final)
 
-            # 3. Mostrar resultado
-            st.markdown(respuesta_texto)
-            st.session_state.messages.append({"role": "assistant", "content": respuesta_texto})
-            st.caption(f"📊 Registrado para Make: {resumen_ia}")
+            # C. Mostrar resultados
+            st.markdown(texto_ia)
+            st.session_state.messages.append({"role": "assistant", "content": texto_ia})
+            st.caption(f"📊 Reporte guardado: {resumen_para_excel}")
             st.balloons()
-            
+
         except Exception as e:
-            st.error(f"Error en el proceso: {e}")
+            # Si da error 400, aquí veremos exactamente por qué
+            st.error(f"Error 400 detectado. Detalles: {e}")
+            st.info("Revisa si el mensaje es muy largo o si la API Key en Secrets tiene comillas dobles.")
