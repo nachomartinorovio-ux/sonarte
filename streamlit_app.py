@@ -8,58 +8,56 @@ from datetime import datetime
 st.set_page_config(page_title="Sonarte IA", page_icon="⚡", layout="centered")
 st.title("⚡ Sonarte IA: Gestión Total")
 
-# --- MOTOR DE INTELIGENCIA BLINDADO ---
+# --- MOTOR DE INTELIGENCIA AUTORREPARABLE ---
 try:
-    # 1. Configurar API
+    # 1. Conectamos con tu llave
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
-    # 2. Buscar modelos disponibles (Evita el error 404)
-    modelos_en_tu_cuenta = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    # 2. Buscamos qué modelos tienes activos (Evita errores 404 y 400)
+    modelos_vivos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
     
-    # Elegimos el mejor: Flash > Pro > El que haya
-    if 'models/gemini-1.5-flash' in modelos_en_tu_cuenta:
-        seleccion = 'models/gemini-1.5-flash'
-    elif 'models/gemini-1.5-pro' in modelos_en_tu_cuenta:
-        seleccion = 'models/gemini-1.5-pro'
+    # Prioridad: 1.5-flash (el más rápido), si no el que sea
+    if 'models/gemini-1.5-flash' in modelos_vivos:
+        motor_final = 'models/gemini-1.5-flash'
     else:
-        seleccion = modelos_en_tu_cuenta[0]
+        motor_final = modelos_vivos[0]
         
-    model = genai.GenerativeModel(seleccion)
+    model = genai.GenerativeModel(motor_final)
     conn = st.connection("gsheets", type=GSheetsConnection)
-    st.sidebar.success(f"Motor activo: {seleccion}")
+    st.sidebar.success(f"🚀 Motor Activo: {motor_final}")
 
 except Exception as e:
-    st.error(f"Fallo al arrancar Sonarte IA: {e}")
+    st.error(f"Fallo de arranque: {e}")
     st.stop()
 
-# --- INTERFAZ DE USUARIO ---
+# --- CHAT PROFESIONAL ---
 if prompt := st.chat_input("¿Qué ha pasado hoy en los apartamentos?"):
     with st.chat_message("user"):
         st.write(prompt)
 
     with st.chat_message("assistant"):
         try:
-            # La IA procesa la información
-            response = model.generate_content(f"Resume este reporte para un Excel en máximo 5 palabras: {prompt}")
+            # La IA resume con instrucciones claras
+            contexto = "Resume este reporte de limpieza/mantenimiento en máximo 5 palabras."
+            response = model.generate_content(f"{contexto} Reporte: {prompt}")
             resumen = response.text.strip()
             
-            # GUARDADO EN GOOGLE SHEETS
-            # Leemos la pestaña ENTRADA_GLIDE
+            # GUARDADO EN GOOGLE SHEETS (Sincronización Total)
             df_actual = conn.read(worksheet="ENTRADA_GLIDE")
             
-            # Preparamos la nueva fila
+            # Nueva línea con la hora de España
             nueva_fila = pd.DataFrame([{
                 "FECHA": datetime.now().strftime("%d/%m/%Y %H:%M"),
                 "MENSAJE_BRUTO": resumen
             }])
             
-            # Pegamos y subimos
+            # Unir datos y subir
             df_final = pd.concat([df_actual, nueva_fila], ignore_index=True)
             conn.update(worksheet="ENTRADA_GLIDE", data=df_final)
             
-            st.balloons()
-            st.success(f"✅ Registrado con éxito: {resumen}")
+            st.balloons() # ¡Celebración de éxito!
+            st.success(f"✅ Registrado en Excel: {resumen}")
             
         except Exception as e:
-            st.error(f"Error en el proceso: {e}")
-            st.info("Si el error persiste, limpia la caché en el menú de la derecha.")
+            st.error(f"Error en combate: {e}")
+            st.info("Prueba a escribir de nuevo o revisa los permisos del Excel.")
